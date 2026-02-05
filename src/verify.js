@@ -10,7 +10,9 @@ import { calculateFileHash } from './hash.js';
 export function verifyContent(db, quiet = false) {
     if (!quiet) process.stdout.write(`[*] Verifying logical data integrity... `);
 
-    const info = db.prepare('SELECT snapshot_hash FROM snapshot_info').get();
+    const info = /** @type {{ snapshot_hash: string }} */ (
+        db.prepare('SELECT snapshot_hash FROM snapshot_info').get()
+    );
     if (!info?.snapshot_hash) {
         if (!quiet) console.log('FAILED\n[!] Error: No snapshot_hash found.');
         return { status: 'failed', data: { stored: null, calculated: null } };
@@ -54,6 +56,7 @@ export async function verifyFile(dbPath, quiet = false) {
         };
     } catch (e) {
         if (!quiet) console.log('ERROR');
-        return { status: 'failed', data: { error: e.message } };
+        let err = e instanceof Error ? e : new Error(String(e));
+        return { status: 'failed', data: { error: err.message } };
     }
 }

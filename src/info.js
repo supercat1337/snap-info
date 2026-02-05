@@ -1,9 +1,8 @@
 //@ts-check
-import { openDb } from './database.js';
 
 /**
  * Formats and displays the snapshot metadata for the console.
- * @param {Object} summary - The summary object returned by getSummary()
+ * @param {{scan_start: number, scan_end: number, total_size: number, total_entries: number, total_files: number, total_dirs: number, total_links: number, total_errors: number, snapshot_hash: string, root_path: string, version: string, time_zone: string, os_platform: string}} summary - The summary object returned by getSummary()
  */
 export function showSummaryFromObject(summary) {
     if (!summary) return;
@@ -40,7 +39,10 @@ export function showSummaryFromObject(summary) {
  */
 export function getSummary(db) {
     try {
-        const info = db.prepare('SELECT * FROM snapshot_info').get();
+        const info =
+            /** @type {{version: string,root_path:string,scan_start:number,scan_end:number,time_zone:string,os_platform:string,total_entries:number,total_files:number,total_dirs:number,total_links:number,total_size:number,total_errors:number, snapshot_hash:string}} */ (
+                db.prepare('SELECT * FROM snapshot_info').get()
+            );
         if (!info) return null;
 
         return {
@@ -58,7 +60,8 @@ export function getSummary(db) {
             total_errors: info.total_errors,
             snapshot_hash: info.snapshot_hash,
         };
-    } catch (error) {
+    } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
         console.error('Error retrieving snapshot info:', error.message);
         return null;
     }
@@ -66,7 +69,7 @@ export function getSummary(db) {
 
 /**
  * Displays the results of the integrity checks.
- * @param {Object} report - The full report object containing verification results
+ * @param {{"verify-content": {status: string, data: {stored: string, calculated: string}}, "verify-file": {status: string, data: {expected: string, actual: string, error: string}}}} report - The full report object containing verification results
  */
 export function showVerificationReport(report) {
     const content = report['verify-content'];

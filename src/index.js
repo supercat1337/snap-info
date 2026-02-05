@@ -19,7 +19,7 @@ async function main() {
 
     const { values, positionals } = parseArgs({ options: argOptions, allowPositionals: true });
     const dbPath = positionals[0];
-    const isJson = values.json;
+    const isJson = typeof values.json === 'boolean' ? values.json : false;
     if (values.help || !dbPath) {
         console.log(`
 snap-info v1.0.0
@@ -44,22 +44,27 @@ Options:
     const db = openDb(dbPath);
     try {
         // 1. Show basic summary first
+        // @ts-ignore
         report.summary = getSummary(db);
+        // @ts-ignore
         if (!isJson) showSummaryFromObject(report.summary);
 
         // 2. Logical data integrity verification
         if (values['verify-content'] || values.verify) {
+            // @ts-ignore
             report['verify-content'] = verifyContent(db, isJson);
         }
 
         // 3. Physical file checksum verification
         if (values['verify-file'] || values.verify) {
+            // @ts-ignore
             report['verify-file'] = await verifyFile(dbPath, isJson);
         }
 
         if (isJson) {
             console.log(JSON.stringify(report, null, 2));
         } else {
+            // @ts-ignore
             showVerificationReport(report);
         }
     } catch (e) {
