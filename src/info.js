@@ -32,6 +32,27 @@ export function showSummaryFromObject(summary) {
     console.log(`-------------------------------------------`);
 }
 
+export class Summary {
+    /**
+     * @param {*} data
+     */
+    constructor(data) {
+        this.version = data.version;
+        this.root_path = data.root_path;
+        this.scan_start = data.scan_start;
+        this.scan_end = data.scan_end;
+        this.time_zone = data.time_zone;
+        this.os_platform = data.os_platform;
+        this.total_entries = data.total_entries;
+        this.total_files = data.total_files;
+        this.total_dirs = data.total_dirs;
+        this.total_links = data.total_links;
+        this.total_size = data.total_size;
+        this.total_errors = data.total_errors;
+        this.snapshot_hash = data.snapshot_hash;
+    }
+}
+
 /**
  * Retrieves summary information from the snapshot database.
  * @param {import('better-sqlite3').Database} db
@@ -45,7 +66,7 @@ export function getSummary(db) {
             );
         if (!info) return null;
 
-        return {
+        return new Summary({
             version: info.version,
             root_path: info.root_path,
             scan_start: Number(info.scan_start), // Ensure it's a number
@@ -59,7 +80,7 @@ export function getSummary(db) {
             total_size: info.total_size,
             total_errors: info.total_errors,
             snapshot_hash: info.snapshot_hash,
-        };
+        });
     } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         console.error('Error retrieving snapshot info:', error.message);

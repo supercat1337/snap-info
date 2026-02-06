@@ -2,8 +2,15 @@
 //@ts-check
 import { parseArgs } from 'node:util';
 import { openDb } from './database.js';
-import { getSummary, showVerificationReport, showSummaryFromObject } from './info.js';
-import { verifyContent, verifyFile, verifyFormat } from './verify.js';
+import { getSummary, showVerificationReport, showSummaryFromObject, Summary } from './info.js';
+import {
+    verifyContent,
+    verifyFile,
+    verifyFormat,
+    VerificationFormatResult,
+    VerificationContentResult,
+    VerificationFileResult,
+} from './verify.js';
 import { basename } from 'node:path';
 
 async function main() {
@@ -42,29 +49,44 @@ Options:
     const providedFileHash =
         typeof values['verify-file'] === 'string' ? values['verify-file'] : null;
 
-    let report = {
+    /** @type {{name: string, 'verify-format': VerificationFormatResult|null, summary: Summary|null, 'verify-content': VerificationContentResult|null, 'verify-file': VerificationFileResult|null}} */
+    const report = {
         name: basename(dbPath),
-        "verify-format": verifyFormat(dbPath),
+        'verify-format': null,
         summary: null,
         'verify-content': null,
         'verify-file': null,
     };
 
+    // 1. Validate Format First (No point in continuing if this fails)
+    report['verify-format'] = verifyFormat(dbPath);
+
+    if (report['verify-format'].status === 'failed') {
+        if (isJson) {
+            console.log(JSON.stringify(report, null, 2));
+        } else {
+            console.error(`\n❌ [FORMAT ERROR] ${report['verify-format'].error}`);
+        }
+        process.exit(1);
+    }
+
+    // 2. Open DB only after format is confirmed
     const db = openDb(dbPath);
+
     try {
-        // 1. Show basic summary first
+        // 1. Get Summary
         // @ts-ignore
         report.summary = getSummary(db);
         // @ts-ignore
         if (!isJson) showSummaryFromObject(report.summary);
 
-        // 2. Logical data integrity verification
+        // 2. Logical verification
         if (checkContent) {
             // @ts-ignore
             report['verify-content'] = verifyContent(db, providedContentHash);
         }
 
-        // 3. Physical file checksum verification
+        // 3. Physical verification
         if (checkFile) {
             // @ts-ignore
             report['verify-file'] = await verifyFile(dbPath, providedFileHash);
