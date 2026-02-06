@@ -2,7 +2,7 @@
 
 A verification and reporting companion for **snap-generator**. It allows you to audit snapshot metadata, perform deep integrity checks, and export forensic reports in machine-readable formats.
 
-snap-info ensures that your file system snapshots remain untampered and provides a high-level summary of the captured data without modifying the database.
+**snap-info** ensures that your file system snapshots remain untampered and provides a high-level summary of the captured data without modifying the database.
 
 ---
 
@@ -134,9 +134,8 @@ When using the `--json` flag, snap-info returns a structured report. This format
 
 ## 🛡 Security Notes
 
-- **Exit Codes:** snap-info will exit with code 1 if any requested verification fails, making it ideal for use in CI/CD or Cron jobs.
-- **Forensic Mode:** Always use the `--verify` flag when moving snapshots between systems to ensure the Chain of Custody remains intact.
-
+- **Exit Codes:** The utility exits with code 1 if any requested verification (format, content, or file) fails.
+- **Fail-Fast:** If the Format Integrity check fails, the utility immediately aborts to prevent processing corrupted data.
 ---
 
 ## 📄 License
