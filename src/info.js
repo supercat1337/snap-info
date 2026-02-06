@@ -69,36 +69,38 @@ export function getSummary(db) {
 
 /**
  * Displays the results of the integrity checks.
- * @param {{"verify-content": {status: string, data: {stored: string, calculated: string}}, "verify-file": {status: string, data: {expected: string, actual: string, error: string}}}} report - The full report object containing verification results
+ * @param {{"verify-content": {status: string, data: {stored: string, calculated: string, matchesInternal: boolean, matchesExternal: boolean, external: string}}, "verify-file": {status: string, data: {expected: string, actual: string, error: string, matchesSidecar: boolean, matchesExternal: boolean, sidecar: string, external: string}}}} report - The full report object containing verification results
  */
 export function showVerificationReport(report) {
     const content = report['verify-content'];
     const file = report['verify-file'];
 
-    if (!content && !file) return;
-
-    console.log(`--- Integrity Verification Report ---`);
-
     if (content) {
-        const icon = content.status === 'success' ? '✅' : '❌';
-        console.log(`${icon} Logical Content Integrity: ${content.status.toUpperCase()}`);
-        if (content.status === 'failed') {
-            console.log(`   └─ Stored Hash:     ${content.data.stored}`);
-            console.log(`   └─ Calculated Hash: ${content.data.calculated}`);
-        }
+        console.log(
+            `${content.status === 'success' ? '✅' : '❌'} Logical Content Integrity: ${content.status.toUpperCase()}`
+        );
+        if (!content.data.matchesInternal)
+            console.log(`   └─ [INTERNAL MISMATCH] Expected: ${content.data.stored}`);
+        if (!content.data.matchesExternal)
+            console.log(`   └─ [CLI HASH MISMATCH] Expected: ${content.data.external}`);
+        if (content.status === 'failed')
+            console.log(`   └─ Actual Calculated: ${content.data.calculated}`);
     }
 
     if (file) {
-        const icon = file.status === 'success' ? '✅' : '❌';
-        console.log(`${icon} Physical File Checksum:   ${file.status.toUpperCase()}`);
-        if (file.status === 'failed') {
+        if (file.status === 'success') {
+            console.log(`✅ Physical File Integrity: PASSED`);
+        } else {
+            console.log(`❌ Physical File Integrity: FAILED`);
             if (file.data.error) {
-                console.log(`   └─ Error: ${file.data.error}`);
-            } else {
-                console.log(`   └─ Expected Hash: ${file.data.expected}`);
-                console.log(`   └─ Actual Hash:   ${file.data.actual}`);
+                console.log(`   └─ [!] ${file.data.error}`);
+            }
+            if (file.data.matchesSidecar === false) {
+                console.log(`   └─ [SIDECAR MISMATCH] Expected: ${file.data.sidecar}`);
+            }
+            if (file.data.matchesExternal === false) {
+                console.log(`   └─ [CLI HASH MISMATCH] Expected: ${file.data.external}`);
             }
         }
     }
-    console.log(`-------------------------------------------`);
 }

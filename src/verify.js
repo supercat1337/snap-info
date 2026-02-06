@@ -1,62 +1,234 @@
 //@ts-check
-import { readFileSync, existsSync } from 'node:fs';
-import { calculateSnapshotHash } from './database.js';
+import { readFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs';
+import { calculateSnapshotContentHash, openDb } from './database.js';
 import { calculateFileHash } from './hash.js';
 
 /**
- * @param {import('better-sqlite3').Database} db
- * @param {boolean} [quiet=false]
+ * Base Verification Class to ensure consistent structure
  */
-export function verifyContent(db, quiet = false) {
-    if (!quiet) process.stdout.write(`[*] Verifying logical data integrity... `);
+export class VerificationResult {
+    /**
+     * @param {'success' | 'failed'} status
+     * @param {Object} data
+     * @param {string | null} error
+     */
+    constructor(status, data, error = null) {
+        this.status = status;
+        this.data = data;
+        this.error = error;
+    }
+}
 
-    const info = /** @type {{ snapshot_hash: string }} */ (
-        db.prepare('SELECT snapshot_hash FROM snapshot_info').get()
-    );
-    if (!info?.snapshot_hash) {
-        if (!quiet) console.log('FAILED\n[!] Error: No snapshot_hash found.');
-        return { status: 'failed', data: { stored: null, calculated: null } };
+export class VerificationContentResult extends VerificationResult {
+    /**
+     * @param {'success' | 'failed'} status
+     * @param {{stored: string|null, calculated: string, external: string|null, matchesInternal: boolean|null, matchesExternal: boolean|null}} data
+     * @param {string|null} error
+     */
+    constructor(status, data, error = null) {
+        super(status, data, error);
+    }
+}
+
+export class VerificationFileResult extends VerificationResult {
+    /**
+     * @param {'success' | 'failed'} status
+     * @param {{actual: string, sidecar: string|null, external: string|null, matchesSidecar: boolean|null, matchesExternal: boolean|null}} data
+     * @param {string|null} error
+     */
+    constructor(status, data, error = null) {
+        super(status, data, error);
+    }
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string|null} externalHash
+ */
+export function verifyContent(db, externalHash = null) {
+    const info = db.prepare('SELECT snapshot_hash FROM snapshot_info').get();
+    const currentHash = calculateSnapshotContentHash(db);
+
+    const matchesInternal = info?.snapshot_hash ? currentHash === info.snapshot_hash : null;
+    const matchesExternal = externalHash ? currentHash === externalHash : null;
+
+    // Strict logic: mismatch is a failure; missing internal hash is also a failure for content
+    const isMismatch = matchesInternal === false || matchesExternal === false;
+    const hasInternalSource = info?.snapshot_hash != null;
+
+    /** @type {'success' | 'failed'} */
+    let status = 'success';
+    let error = null;
+
+    if (isMismatch) {
+        status = 'failed';
+        error = 'Logical hash mismatch detected';
+    } else if (!hasInternalSource && !externalHash) {
+        status = 'failed';
+        error = 'No verification source available (internal snapshot_hash is missing)';
     }
 
-    const currentHash = calculateSnapshotHash(db);
-    const isValid = currentHash === info.snapshot_hash;
-
-    if (!quiet) console.log(isValid ? 'PASSED' : 'FAILED');
-
-    return {
-        status: isValid ? 'success' : 'failed',
-        data: { stored: info.snapshot_hash, calculated: currentHash },
-    };
+    return new VerificationContentResult(
+        status,
+        {
+            stored: info?.snapshot_hash || null,
+            calculated: currentHash,
+            external: externalHash,
+            matchesInternal,
+            matchesExternal,
+        },
+        error
+    );
 }
 
 /**
  * @param {string} dbPath
- * @param {boolean} [quiet=false]
+ * @param {string|null} externalHash
  */
-export async function verifyFile(dbPath, quiet = false) {
-    const checksumPath = `${dbPath}.sha256`;
-    if (!quiet) process.stdout.write(`[*] Verifying physical file checksum... `);
+export async function verifyFile(dbPath, externalHash = null) {
+    const actualHash = await calculateFileHash(dbPath);
+    let sidecarHash = null;
+    let matchesSidecar = null;
 
-    if (!existsSync(checksumPath)) {
-        if (!quiet) console.log('SKIPPED');
-        return { status: 'failed', data: { error: 'Checksum file missing' } };
+    const checksumPath = `${dbPath}.sha256`;
+    if (existsSync(checksumPath)) {
+        try {
+            const line = readFileSync(checksumPath, 'utf8').split('\n')[0];
+            sidecarHash = line.split(/\s+/)[0];
+            matchesSidecar = actualHash === sidecarHash;
+        } catch (e) {
+            matchesSidecar = false;
+        }
     }
+    const matchesExternal = externalHash ? actualHash === externalHash : null;
+
+    const hasSource = sidecarHash !== null || externalHash !== null;
+    const isMismatch = matchesSidecar === false || matchesExternal === false;
+
+    /** @type {'success' | 'failed'} */
+    let status = 'success';
+    let error = null;
+
+    if (isMismatch) {
+        status = 'failed';
+        error = 'Physical hash mismatch detected';
+    } else if (!hasSource) {
+        status = 'failed';
+        error = 'No verification source available (missing .sha256 and no CLI hash)';
+    }
+
+    return new VerificationFileResult(
+        status,
+        {
+            actual: actualHash,
+            sidecar: sidecarHash,
+            external: externalHash,
+            matchesSidecar,
+            matchesExternal,
+        },
+        error
+    );
+}
+
+export class VerificationFormatResult extends VerificationResult {
+    /**
+     * Constructs a new VerificationFormatResult object.
+     * @param {'success' | 'failed'} status - The verification status.
+     * @param {Object} data - The verification data object.
+     * @param {string | null} [error] - An optional error message if the verification failed.
+     */
+    constructor(status, data, error = null) {
+        super(status, data, error);
+    }
+}
+
+/**
+ * Runs a low-level SQLite integrity check.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {boolean}
+ */
+export function runSqliteQuickCheck(db) {
+    const result = db.prepare('PRAGMA quick_check').get();
+    return result.quick_check === 'ok';
+}
+
+/**
+ * Verifies that the database has the required tables and columns.
+ * @param {import('better-sqlite3').Database} db
+ * @returns {{isValid: boolean, error: string|null}}
+ */
+export function verifyDatabaseSchema(db) {
+    const requiredTables = ['snapshot_info', 'entries'];
+    const schemaMap = {
+        snapshot_info: ['version', 'snapshot_hash', 'root_path'],
+        entries: ['path', 'hash', 'type', 'size'],
+    };
 
     try {
-        const expectedLine = readFileSync(checksumPath, 'utf8').split('\n')[0];
-        const expectedHash = expectedLine.split(' ')[0];
-        const actualHash = await calculateFileHash(dbPath);
-        const isValid = expectedHash === actualHash;
+        for (const table of requiredTables) {
+            // Check if table exists
+            const tableExists = db
+                .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+                .get(table);
+            if (!tableExists) return { isValid: false, error: `Missing table: ${table}` };
 
-        if (!quiet) console.log(isValid ? 'PASSED' : 'FAILED');
-
-        return {
-            status: isValid ? 'success' : 'failed',
-            data: { expected: expectedHash, actual: actualHash },
-        };
+            // Check for critical columns
+            const columns = db
+                .prepare(`PRAGMA table_info(${table})`)
+                .all()
+                .map(c => c.name);
+            for (const col of schemaMap[table]) {
+                if (!columns.includes(col))
+                    return { isValid: false, error: `Missing column '${col}' in table '${table}'` };
+            }
+        }
+        return { isValid: true, error: null };
     } catch (e) {
-        if (!quiet) console.log('ERROR');
-        let err = e instanceof Error ? e : new Error(String(e));
-        return { status: 'failed', data: { error: err.message } };
+        return { isValid: false, error: `Schema probe failed: ${e.message}` };
     }
+}
+
+/**
+ * Verifies if the file header matches the SQLite 3 standard.
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+export function verifySqliteHeader(filePath) {
+    const MAGIC_HEADER = 'SQLite format 3\0';
+    const buffer = Buffer.alloc(16);
+
+    try {
+        const fd = openSync(filePath, 'r');
+        readSync(fd, buffer, 0, 16, 0);
+        closeSync(fd);
+        return buffer.toString('binary') === MAGIC_HEADER;
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * Validates file header, SQLite integrity, and table schema.
+ * @param {string} dbPath
+ */
+export function verifyFormat(dbPath) {
+    const isHeaderValid = verifySqliteHeader(dbPath); // From previous step
+    if (!isHeaderValid) return new VerificationFormatResult('failed', {}, 'Invalid SQLite header');
+
+    const db = openDb(dbPath);
+
+    const isInternalOk = runSqliteQuickCheck(db);
+    if (!isInternalOk) {
+        db.close();
+        return new VerificationFormatResult('failed', {}, 'SQLite internal corruption detected');
+    }
+
+    const schema = verifyDatabaseSchema(db);
+    if (!schema.isValid) {
+        db.close();
+        return new VerificationFormatResult('failed', {}, schema.error);
+    }
+
+    db.close();
+    return new VerificationFormatResult('success', { header: 'ok', integrity: 'ok', schema: 'ok' });
 }

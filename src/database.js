@@ -20,7 +20,7 @@ export function openDb(dbPath, { readonly = true } = {}) {
  * @param {import('better-sqlite3').Database} db
  * @returns {string} The final SHA256 hex hash.
  */
-export function calculateSnapshotHash(db) {
+export function calculateSnapshotContentHash(db) {
     const snapshotHasher = createHash('sha256');
 
     // WITHOUT ROWID tables store data sorted by PRIMARY KEY, so we can iterate directly.
@@ -35,3 +35,4 @@ export function calculateSnapshotHash(db) {
 
     return snapshotHasher.digest('hex');
 }
+
