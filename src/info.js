@@ -90,7 +90,7 @@ export function getSummary(db) {
 
 /**
  * Displays the results of the integrity checks.
- * @param {{"verify-content": {status: string, data: {stored: string, calculated: string, matchesInternal: boolean, matchesExternal: boolean, external: string}}, "verify-file": {status: string, data: {expected: string, actual: string, error: string, matchesSidecar: boolean, matchesExternal: boolean, sidecar: string, external: string}}}} report - The full report object containing verification results
+ * @param {{"verify-content": {status: string, data: {stored: string, calculated: string, matchesInternal: boolean, matchesExternal: boolean, external: string, matchesSidecar: boolean, sidecar: string}}, "verify-file": {status: string, data: {expected: string, actual: string, error: string, matchesSidecar: boolean, matchesExternal: boolean, sidecar: string, external: string}}}} report - The full report object containing verification results
  */
 export function showVerificationReport(report) {
     const content = report['verify-content'];
@@ -100,6 +100,11 @@ export function showVerificationReport(report) {
         console.log(
             `${content.status === 'success' ? '✅' : '❌'} Logical Content Integrity: ${content.status.toUpperCase()}`
         );
+        if (content.data.matchesSidecar === false) {
+            console.log(
+                `   └─ [CONTENT SIDE-CAR MISMATCH] Expected from .content.hash: ${content.data.sidecar}`
+            );
+        }
         if (!content.data.matchesInternal)
             console.log(`   └─ [INTERNAL MISMATCH] Expected: ${content.data.stored}`);
         if (!content.data.matchesExternal)
