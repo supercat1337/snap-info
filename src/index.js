@@ -75,20 +75,18 @@ Options:
 
     try {
         // 1. Get Summary
-        // @ts-ignore
         report.summary = getSummary(db);
-        // @ts-ignore
+        if (!report.summary) throw new Error('Failed to get summary');
+
         if (!isJson) showSummaryFromObject(report.summary);
 
         // 2. Logical verification
         if (checkContent) {
-            // @ts-ignore
-            report['verify-content'] = verifyContent(db, providedContentHash);
+            report['verify-content'] = verifyContent(db, dbPath, providedContentHash);
         }
 
         // 3. Physical verification
         if (checkFile) {
-            // @ts-ignore
             report['verify-file'] = await verifyFile(dbPath, providedFileHash);
         }
 

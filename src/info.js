@@ -56,7 +56,7 @@ export class Summary {
 /**
  * Retrieves summary information from the snapshot database.
  * @param {import('better-sqlite3').Database} db
- * @returns {Object|null} Summary info or null if not found/error
+ * @returns {Summary|null} Summary info or null if not found/error
  */
 export function getSummary(db) {
     try {

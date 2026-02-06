@@ -22,7 +22,7 @@ export class VerificationResult {
 export class VerificationContentResult extends VerificationResult {
     /**
      * @param {'success' | 'failed'} status
-     * @param {{stored: string|null, calculated: string, external: string|null, matchesInternal: boolean|null, matchesExternal: boolean|null}} data
+     * @param {{stored: string|null, calculated: string, external: string|null, matchesInternal: boolean|null, matchesExternal: boolean|null, matchesSidecar: boolean|null, sidecar: string|null}} data
      * @param {string|null} error
      */
     constructor(status, data, error = null) {
@@ -43,20 +43,41 @@ export class VerificationFileResult extends VerificationResult {
 
 /**
  * @param {import('better-sqlite3').Database} db
+ * @param {string} dbPath
  * @param {string|null} externalHash
  */
-export function verifyContent(db, externalHash = null) {
+export function verifyContent(db, dbPath, externalHash = null) {
     const info = db.prepare('SELECT snapshot_hash FROM snapshot_info').get();
     const currentHash = calculateSnapshotContentHash(db);
+
+    let sidecarContentHash = null;
+    let matchesSidecar = null;
+    const sidecarPath = `${dbPath}.content.hash`;
+
+    if (existsSync(sidecarPath)) {
+        try {
+            const lines = readFileSync(sidecarPath, 'utf8').split('\n');
+            // find first non-empty, non-comment line
+            let found = lines.find(line => line.trim() && !line.startsWith('#'))?.trim();
+            if (found) {
+                sidecarContentHash = found;
+                matchesSidecar = currentHash === sidecarContentHash;
+            }
+        } catch (e) {
+            matchesSidecar = false;
+        }
+    }
 
     // @ts-ignore
     const matchesInternal = info?.snapshot_hash ? currentHash === info.snapshot_hash : null;
     const matchesExternal = externalHash ? currentHash === externalHash : null;
 
     // Strict logic: mismatch is a failure; missing internal hash is also a failure for content
-    const isMismatch = matchesInternal === false || matchesExternal === false;
-    // @ts-ignore
-    const hasInternalSource = info?.snapshot_hash != null;
+    const isMismatch =
+        matchesInternal === false || matchesExternal === false || matchesSidecar === false;
+    const hasSource =
+        // @ts-ignore
+        info?.snapshot_hash != null || externalHash != null || sidecarContentHash != null;
 
     /** @type {'success' | 'failed'} */
     let status = 'success';
@@ -65,9 +86,9 @@ export function verifyContent(db, externalHash = null) {
     if (isMismatch) {
         status = 'failed';
         error = 'Logical hash mismatch detected';
-    } else if (!hasInternalSource && !externalHash) {
+    } else if (!hasSource) {
         status = 'failed';
-        error = 'No verification source available (internal snapshot_hash is missing)';
+        error = 'No logical verification source available';
     }
 
     return new VerificationContentResult(
@@ -77,8 +98,10 @@ export function verifyContent(db, externalHash = null) {
             stored: info?.snapshot_hash || null,
             calculated: currentHash,
             external: externalHash,
+            sidecar: sidecarContentHash,
             matchesInternal,
             matchesExternal,
+            matchesSidecar,
         },
         error
     );
