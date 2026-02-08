@@ -185,10 +185,12 @@ export function runSqliteQuickCheck(db) {
  * @returns {{isValid: boolean, error: string|null}}
  */
 export function verifyDatabaseSchema(db) {
-    const requiredTables = ['snapshot_info', 'entries'];
+    const requiredTables = ['snapshot_info', 'entries', 'users', 'groups'];
     const schemaMap = {
         snapshot_info: ['version', 'snapshot_hash', 'root_path'],
         entries: ['path', 'hash', 'type', 'size'],
+        users: ['uid', 'username', 'gid', 'gecos', 'homedir', 'shell'],
+        groups: ['gid', 'groupname', 'members'],
     };
 
     try {

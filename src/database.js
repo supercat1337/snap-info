@@ -15,7 +15,6 @@ export function openDb(dbPath, { readonly = true } = {}) {
 
 /**
  * Calculates a deterministic hash of the entire snapshot.
- * Uses .iterate() to handle large datasets without high RAM usage.
  *
  * @param {import('better-sqlite3').Database} db
  * @returns {string} The final SHA256 hex hash.
@@ -23,16 +22,19 @@ export function openDb(dbPath, { readonly = true } = {}) {
 export function calculateSnapshotContentHash(db) {
     const snapshotHasher = createHash('sha256');
 
-    // WITHOUT ROWID tables store data sorted by PRIMARY KEY, so we can iterate directly.
-    // This ensures we get a consistent order regardless of the underlying storage or platform.
-    const statement = db.prepare('SELECT * FROM entries ORDER BY path ASC');
-
-    for (const row of statement.iterate()) {
-        // Stringify each row to ensure consistent hashing. We can also choose to only hash certain fields if desired.
-        // This will give us a consistent hash regardless of the underlying storage or platform.
+    const entriesStmt = db.prepare('SELECT * FROM entries ORDER BY path ASC');
+    for (const row of entriesStmt.iterate()) {
         snapshotHasher.update(JSON.stringify(row));
     }
 
+    const usersStmt = db.prepare('SELECT * FROM users ORDER BY uid ASC');
+    for (const row of usersStmt.iterate()) {
+        snapshotHasher.update(JSON.stringify(row));
+    }
+
+    const groupsStmt = db.prepare('SELECT * FROM groups ORDER BY gid ASC');
+    for (const row of groupsStmt.iterate()) {
+        snapshotHasher.update(JSON.stringify(row));
+    }
     return snapshotHasher.digest('hex');
 }
-
