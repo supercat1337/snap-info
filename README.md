@@ -19,13 +19,15 @@ A verification and reporting companion for **snap-generator**. It allows you to 
 
 ## 🛠 Command Line Options
 
-| Flag | Long Name        | Description                                                                                              |
-| ---- | ---------------- | -------------------------------------------------------------------------------------------------------- |
-| -s   | --verify-content | Recalculate logical hash and compare with internal metadata. Optionally provide a [hash] for comparison. |
-| -k   | --verify-file    | Verify DB file against external .sha256 file. Optionally provide a [hash] for comparison.                |
-| -v   | --verify         | Perform both logical and physical verification using internal/sidecar data.                              |
-| -j   | --json           | Output the entire report in structured JSON format.                                                      |
-| -h   | --help           | Show help information.                                                                                   |
+| Flag                  | Long Name | Argument | Description                                                |
+| --------------------- | --------- | -------- | ---------------------------------------------------------- |
+| -v                    | --verify  | None     | Enable all internal verifications (Content & File).        |
+| -s                    | --sig     | <hash>   | Verify logical data against this external SHA-256 string.  |
+| -c                    | --chksum  | <hash>   | Verify physical file against this external SHA-256 string. |
+| --require-sig-file    | None      | None     | Fail verification if the .sig sidecar file is missing.     |
+| --require-chksum-file | None      | None     | Fail verification if the .sha256 sidecar file is missing.  |
+| -j                    | --json    | None     | Output the entire report in structured JSON format.        |
+| -h                    | --help    | None     | Show help information.                                     |
 
 ---
 
@@ -53,18 +55,39 @@ Display metadata, platform info, and file statistics:
 snap-info snapshot.db
 ```
 
-### Logical Verification against a Trusted Hash
-
-```bash
-snap-info snapshot.db -s 8e1e1657b47dd99ca30d33e0fd419dbba7b38b4485639960d54d86a0644cb224
-```
-
 ### Full Integrity Audit
 
 Verify both the internal data rows and the physical file container:
 
 ```bash
 snap-info snapshot.db --verify
+```
+
+### Trusted External Verification
+
+If you received a hash via a secure channel, you can force the tool to verify the snapshot against that specific value, ignoring or complementing internal metadata:
+
+```bash
+# Verify the data content against a known trusted hash
+snap-info snapshot.db --sig 8e1e1657b47dd99ca30d33e0fd419dbba7b38b4485639960d54d86a0644cb224
+```
+
+### Strict Forensic Audit
+
+In high-security environments, you may want to ensure that no integrity sidecars were deleted to hide evidence. Use the "require" flags to mandate their presence:
+
+```bash
+# Fail if either the .sig or .sha256 files are missing from the directory
+snap-info snapshot.db -v --require-sig-file --require-chksum-file
+```
+
+### Automated Integrity Monitoring
+
+Since snap-info returns Exit Code 1 on any verification failure, it is perfect for CI/CD pipelines or Cron jobs:
+
+```bash
+# If verification fails, the second command (alert) will run
+snap-info snapshot.db -v || echo "ALERT: Integrity breach detected!"
 ```
 
 ### Automated JSON Report
@@ -80,7 +103,7 @@ snap-info snapshot.db --verify --json > report.json
 ## 🔐 Verification Layers Explained
 
 1. **Format Integrity:** Checks for a valid SQLite header and the presence of snapshot_info and entries tables.
-2. **Logical Content (-s):** Compares the current data state against the snapshot_hash inside the DB and/or the CLI argument.
+2. **Logical Content (-s):** Compares the current data state against the snapshot_hash inside the DB and/or the CLI argument or .sig sidecar.
 3. **Physical Integrity (-k):** Compares the file's binary hash against the .sha256 sidecar and/or the CLI argument.
 
 ---
@@ -91,42 +114,55 @@ When using the `--json` flag, snap-info returns a structured report. This format
 
 ```json
 {
-  "name": "snapshot-1770318683747.db",
-  "verify-format": {
-    "status": "success",
-    "data": { "header": "ok", "schema": "ok" },
-    "error": null
-  },
-  "summary": {
-    "version": "1.0.0",
-    "root_path": "C:\\Data",
-    "scan_start": 1770318683771,
-    "total_entries": 5202,
-    "total_size": 217822308,
-    "snapshot_hash": "8e1e1657..."
-  },
-  "verify-content": {
-    "status": "success",
-    "data": {
-      "stored": "8e1e1657...",
-      "calculated": "8e1e1657...",
-      "external": null,
-      "matchesInternal": true,
-      "matchesExternal": true
+    "name": "snapshot-1770318683747.db",
+    "verify-format": {
+        "status": "success",
+        "data": { "header": "ok", "schema": "ok" },
+        "error": null
     },
-    "error": null
-  },
-  "verify-file": {
-    "status": "failed",
-    "data": {
-      "actual": "fcb1164f...",
-      "sidecar": "fcb1164f...",
-      "external": "different_hash_here",
-      "matchesSidecar": true,
-      "matchesExternal": false
+    "summary": {
+        "snapshot_name": "snap",
+        "version": "1.0.0",
+        "root_path": "C:/Data",
+        "scan_start": 1770628897863,
+        "scan_end": 1770628901508,
+        "time_zone": "Europe/Moscow",
+        "os_platform": "win32",
+        "total_entries": 5214,
+        "total_files": 4025,
+        "total_dirs": 1188,
+        "total_links": 1,
+        "total_size": 173297960,
+        "total_errors": 0,
+        "snapshot_hash": "8e1e1657...",
+        "user_count": 1,
+        "group_count": 1,
+        "exclude_paths": "[\"**/node_modules\",\"**/.git\"]"
     },
-    "error": "Hash mismatch detected"
-  }
+    "verifySign": {
+        "status": "success",
+        "data": {
+            "stored": "8e1e1657...",
+            "calculated": "8e1e1657...",
+            "external": null,
+            "sidecar": "8e1e1657...",
+            "matchesInternal": true,
+            "matchesExternal": null,
+            "matchesSidecar": true
+        },
+        "error": null
+    },
+    "verify-file": {
+        "status": "failed",
+        "data": {
+            "actual": "fcb1164f...",
+            "sidecar": "fcb1164f...",
+            "external": "different_hash_here",
+            "matchesSidecar": true,
+            "matchesExternal": false
+        },
+        "error": "Hash mismatch detected"
+    }
 }
 ```
 
@@ -136,6 +172,7 @@ When using the `--json` flag, snap-info returns a structured report. This format
 
 - **Exit Codes:** The utility exits with code 1 if any requested verification (format, content, or file) fails.
 - **Fail-Fast:** If the Format Integrity check fails, the utility immediately aborts to prevent processing corrupted data.
+
 ---
 
 ## 📄 License

@@ -2,70 +2,89 @@
 //@ts-check
 import { parseArgs } from 'node:util';
 import { openDb } from './database.js';
-import { getSummary, showVerificationReport, showSummaryFromObject, Summary } from './info.js';
-import {
-    verifyContent,
-    verifyFile,
-    verifyFormat,
-    VerificationFormatResult,
-    VerificationContentResult,
-    VerificationFileResult,
-} from './verify.js';
-import { basename } from 'node:path';
+import { getSummary, showSummaryFromObject, Summary } from './summary.js';
+import { showVerificationReport, Report } from './report.js';
+import { verifyContent, verifyFile, verifyFormat } from './verify.js';
 
 async function main() {
     // Parse command line arguments
     /** @type {import('node:util').ParseArgsConfig['options']} */
-    const argOptions = {
-        'verify-content': { type: 'string', short: 's' },
-        'verify-file': { type: 'string', short: 'k' },
-        verify: { type: 'boolean', short: 'v' },
-        json: { type: 'boolean', short: 'j' },
-        help: { type: 'boolean', short: 'h' },
+    let argOptions = {
+        verify: { type: 'boolean', short: 'v', default: false },
+
+        // External Hash Arguments (Values)
+        sig: { type: 'string', short: 's' }, // -s <hash> for logical data
+        chksum: { type: 'string', short: 'c' }, // -c <hash> for physical file
+
+        // Strictness Flags (File requirements)
+        'require-sig-file': { type: 'boolean', default: false },
+        'require-chksum-file': { type: 'boolean', default: false },
+
+        json: { type: 'boolean', short: 'j', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
     };
 
-    const { values, positionals } = parseArgs({ options: argOptions, allowPositionals: true });
+    let { values, positionals } = parseArgs({ options: argOptions, allowPositionals: true });
+
     const dbPath = positionals[0];
     const isJson = typeof values.json === 'boolean' ? values.json : false;
+
     if (values.help || !dbPath) {
         console.log(`
 snap-info v1.0.0
+Forensic Snapshot Verification & Reporting Tool
+
 Usage: snap-info <database.db> [options]
 
-Options:
-  -s, --verify-content [hash]  Verify data integrity (optionally against [hash])
-  -k, --verify-file [hash]     Verify file integrity (optionally against [hash])
-  -v, --verify                 Verify everything using internal/sidecar data
-  -h, --help                   Show this help info
-            `);
+Core Options:
+  -h, --help                Show this help info
+  -j, --json                Output the entire report in structured JSON format
+  -v, --verify              Enable all internal verifications (Content & File)
+
+Data Integrity (Logical):
+  -s, --sig <hash>          Verify data integrity against this external SHA-256 string
+  --require-sig-file        Fail verification if the .sig sidecar file is missing
+
+File Integrity (Physical):
+  -c, --chksum <hash>       Verify DB file against this external SHA-256 string
+  --require-chksum-file     Fail verification if the .sha256 sidecar file is missing
+
+Examples:
+  snap-info snapshot.db                       Show metadata summary only
+  snap-info snapshot.db -v                    Verify using internal/sidecar data
+  snap-info snapshot.db -s <HASH> --json      Verify data against <HASH> and output JSON
+  snap-info snapshot.db -v --require-sig-file Strict audit: fail if .sig is missing
+
+Note: This tool opens databases in READONLY mode to preserve binary integrity.
+            `.trim());
         return;
     }
 
-    const checkContent = values['verify-content'] !== undefined || values.verify;
-    const checkFile = values['verify-file'] !== undefined || values.verify;
+    const options = {
+        // We check content if -v is used OR if a specific hash/strictness is requested
+        checkContent: values.verify || values.sig !== undefined || values['require-sig-file'],
+        checkFile: values.verify || values.chksum !== undefined || values['require-chksum-file'],
 
-    const providedContentHash =
-        typeof values['verify-content'] === 'string' ? values['verify-content'] : null;
-    const providedFileHash =
-        typeof values['verify-file'] === 'string' ? values['verify-file'] : null;
+        // External values provided directly in CLI
+        /** @type {string | null} */
+        externalSigValue: typeof values.sig === 'string' ? values.sig : null,
+        externalChksumValue: typeof values.chksum === 'string' ? values.chksum : null,
 
-    /** @type {{name: string, 'verify-format': VerificationFormatResult|null, summary: Summary|null, 'verify-content': VerificationContentResult|null, 'verify-file': VerificationFileResult|null}} */
-    const report = {
-        name: basename(dbPath),
-        'verify-format': null,
-        summary: null,
-        'verify-content': null,
-        'verify-file': null,
+        // Strict requirements for sidecar files
+        requireSigFile: !!values['require-sig-file'],
+        requireChksumFile: !!values['require-chksum-file'],
     };
 
-    // 1. Validate Format First (No point in continuing if this fails)
-    report['verify-format'] = verifyFormat(dbPath);
+    const report = new Report(dbPath);
 
-    if (report['verify-format'].status === 'failed') {
+    // 1. Validate Format First (No point in continuing if this fails)
+    report.verifyFormat = verifyFormat(dbPath);
+
+    if (report.verifyFormat.status === 'failed') {
         if (isJson) {
             console.log(JSON.stringify(report, null, 2));
         } else {
-            console.error(`\n❌ [FORMAT ERROR] ${report['verify-format'].error}`);
+            console.error(`\n❌ [FORMAT ERROR] ${report.verifyFormat.error}`);
         }
         process.exit(1);
     }
@@ -81,19 +100,24 @@ Options:
         if (!isJson) showSummaryFromObject(report.summary);
 
         // 2. Logical verification
-        if (checkContent) {
-            report['verify-content'] = verifyContent(db, dbPath, providedContentHash);
+        if (options.checkContent) {
+            report.verifySign = verifyContent(db, dbPath, {
+                externalHash: options.externalSigValue,
+                requireSigFile: options.requireSigFile,
+            });
         }
 
         // 3. Physical verification
-        if (checkFile) {
-            report['verify-file'] = await verifyFile(dbPath, providedFileHash);
+        if (options.checkFile) {
+            report.verifyFile = await verifyFile(dbPath, {
+                externalHash: options.externalChksumValue,
+                requireChksumFile: options.requireChksumFile,
+            });
         }
 
         if (isJson) {
             console.log(JSON.stringify(report, null, 2));
         } else {
-            // @ts-ignore
             showVerificationReport(report);
         }
     } catch (e) {

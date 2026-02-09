@@ -3,14 +3,11 @@ import { readFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs
 import { calculateSnapshotContentHash, openDb } from './database.js';
 import { calculateFileHash } from './hash.js';
 
-/**
- * Base Verification Class to ensure consistent structure
- */
-export class VerificationResult {
+export class VerificationContentResult {
     /**
      * @param {'success' | 'failed'} status
-     * @param {Object} data
-     * @param {string | null} error
+     * @param {{stored: string|null, calculated: string, external: string|null, matchesInternal: boolean|null, matchesExternal: boolean|null, matchesSidecar: boolean|null, sidecar: string|null}} data
+     * @param {string|null} error
      */
     constructor(status, data, error = null) {
         this.status = status;
@@ -19,40 +16,33 @@ export class VerificationResult {
     }
 }
 
-export class VerificationContentResult extends VerificationResult {
+export class VerificationFileResult {
     /**
      * @param {'success' | 'failed'} status
-     * @param {{stored: string|null, calculated: string, external: string|null, matchesInternal: boolean|null, matchesExternal: boolean|null, matchesSidecar: boolean|null, sidecar: string|null}} data
+     * @param {{actual: string, sidecar: string|null, external: string|null, matchesSidecar: boolean|null, matchesExternal: boolean|null,}} data
      * @param {string|null} error
      */
     constructor(status, data, error = null) {
-        super(status, data, error);
-    }
-}
-
-export class VerificationFileResult extends VerificationResult {
-    /**
-     * @param {'success' | 'failed'} status
-     * @param {{actual: string, sidecar: string|null, external: string|null, matchesSidecar: boolean|null, matchesExternal: boolean|null}} data
-     * @param {string|null} error
-     */
-    constructor(status, data, error = null) {
-        super(status, data, error);
+        this.status = status;
+        this.data = data;
+        this.error = error;
     }
 }
 
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {string} dbPath
- * @param {string|null} externalHash
+ * @param {object} [options]
+ * @param {string|null} [options.externalHash]
+ * @param {boolean|null} [options.requireSigFile]
  */
-export function verifyContent(db, dbPath, externalHash = null) {
+export function verifyContent(db, dbPath, { externalHash = null, requireSigFile = null } = {}) {
     const info = db.prepare('SELECT snapshot_hash FROM snapshot_info').get();
     const currentHash = calculateSnapshotContentHash(db);
 
     let sidecarContentHash = null;
     let matchesSidecar = null;
-    const sidecarPath = `${dbPath}.content.hash`;
+    const sidecarPath = `${dbPath}.sig`;
 
     if (existsSync(sidecarPath)) {
         try {
@@ -66,10 +56,12 @@ export function verifyContent(db, dbPath, externalHash = null) {
         } catch (e) {
             matchesSidecar = false;
         }
+    } else if (requireSigFile) {
+        matchesSidecar = false;
     }
 
     // @ts-ignore
-    const matchesInternal = info?.snapshot_hash ? currentHash === info.snapshot_hash : null;
+    const matchesInternal = info.snapshot_hash ? currentHash === info.snapshot_hash : false;
     const matchesExternal = externalHash ? currentHash === externalHash : null;
 
     // Strict logic: mismatch is a failure; missing internal hash is also a failure for content
@@ -95,7 +87,7 @@ export function verifyContent(db, dbPath, externalHash = null) {
         status,
         {
             // @ts-ignore
-            stored: info?.snapshot_hash || null,
+            stored: info.snapshot_hash,
             calculated: currentHash,
             external: externalHash,
             sidecar: sidecarContentHash,
@@ -109,9 +101,11 @@ export function verifyContent(db, dbPath, externalHash = null) {
 
 /**
  * @param {string} dbPath
- * @param {string|null} externalHash
+ * @param {object} [options]
+ * @param {string|null} [options.externalHash]
+ * @param {boolean|null} [options.requireChksumFile]
  */
-export async function verifyFile(dbPath, externalHash = null) {
+export async function verifyFile(dbPath, { externalHash = null, requireChksumFile = null } = {}) {
     const actualHash = await calculateFileHash(dbPath);
     let sidecarHash = null;
     let matchesSidecar = null;
@@ -126,6 +120,12 @@ export async function verifyFile(dbPath, externalHash = null) {
             matchesSidecar = false;
         }
     }
+    else {
+        if (requireChksumFile) {
+            matchesSidecar = false;
+        }
+    }
+
     const matchesExternal = externalHash ? actualHash === externalHash : null;
 
     const hasSource = sidecarHash !== null || externalHash !== null;
@@ -156,7 +156,7 @@ export async function verifyFile(dbPath, externalHash = null) {
     );
 }
 
-export class VerificationFormatResult extends VerificationResult {
+export class VerificationFormatResult {
     /**
      * Constructs a new VerificationFormatResult object.
      * @param {'success' | 'failed'} status - The verification status.
@@ -164,7 +164,9 @@ export class VerificationFormatResult extends VerificationResult {
      * @param {string | null} [error] - An optional error message if the verification failed.
      */
     constructor(status, data, error = null) {
-        super(status, data, error);
+        this.status = status;
+        this.data = data;
+        this.error = error;
     }
 }
 
@@ -187,9 +189,86 @@ export function runSqliteQuickCheck(db) {
 export function verifyDatabaseSchema(db) {
     const requiredTables = ['snapshot_info', 'entries', 'users', 'groups'];
     const schemaMap = {
-        snapshot_info: ['version', 'snapshot_hash', 'root_path'],
-        entries: ['path', 'hash', 'type', 'size'],
+        /*
+    snapshot_name  TEXT,
+    version TEXT,
+    root_path TEXT,
+    scan_start INTEGER,
+    scan_end INTEGER,
+    scan_duration INTEGER,
+    total_entries INTEGER,
+    total_files INTEGER,
+    total_dirs INTEGER,
+    total_links INTEGER,
+    total_size INTEGER,
+    total_errors INTEGER, 
+    os_platform TEXT,
+    time_zone TEXT,
+    snapshot_hash TEXT,
+    exclude_paths TEXT
+        */
+        snapshot_info: [
+            'snapshot_name',
+            'version',
+            'root_path',
+            'scan_start',
+            'scan_end',
+            'scan_duration',
+            'total_entries',
+            'total_files',
+            'total_dirs',
+            'total_links',
+            'total_size',
+            'total_errors',
+            'os_platform',
+            'time_zone',
+            'snapshot_hash',
+            'exclude_paths',
+        ],
+        /*
+    path TEXT PRIMARY KEY, -- Relative path (e.g., "subdir/file.txt")
+    type TEXT,             -- 'file', 'dir', 'link'
+    size INTEGER,
+    mtime INTEGER, 
+    ctime INTEGER, 
+    btime INTEGER,
+    mode INTEGER,          -- Permissions (755, 644)
+    uid INTEGER,           -- User ID
+    gid INTEGER,           -- Group ID
+    ino INTEGER,           -- Inode number
+    nlink INTEGER,         -- Number of hard links
+    hash TEXT,             -- SHA256 for files
+    target TEXT            -- For symlinks
+        */
+        entries: [
+            'path',
+            'type',
+            'size',
+            'mtime',
+            'ctime',
+            'btime',
+            'mode',
+            'uid',
+            'gid',
+            'ino',
+            'nlink',
+            'hash',
+            'target',
+        ],
+        /*
+    uid INTEGER PRIMARY KEY,
+    username TEXT,
+    gid INTEGER,
+    gecos TEXT,
+    homedir TEXT,
+    shell TEXT
+        */
         users: ['uid', 'username', 'gid', 'gecos', 'homedir', 'shell'],
+        /*
+    gid INTEGER PRIMARY KEY,
+    groupname TEXT,
+    members TEXT -- Store as comma-separated string or JSON
+        */
         groups: ['gid', 'groupname', 'members'],
     };
 
